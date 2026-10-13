@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daevanion Board Solver</title>
+<style>
+  :root {
+    --bg: #13151b;
+    --panel: #1c1f28;
+    --raised: #242834;
+    --line: #2e3340;
+    --text: #e8eaf0;
+    --muted: #9aa1b0;
+    --grey: #b9bdc8;
+    --green: #35d063;
+    --blue: #4aa3ff;
+    --orange: #ff9d2e;
+    --warn: #ff6b6b;
+    --want: #a04df5;
+    --cell: clamp(20px, calc((100vmin - 76px) / 15), 40px);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 18px 24px 0; }
+  h1 { margin: 0; font-size: 20px; font-weight: 650; }
+  .lead { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+  main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; padding: 16px 24px 32px; }
+
+  /* The board sets the width of the left column; the layout text sits under it. */
+  .left { display: grid; gap: 12px; width: min-content; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(15, var(--cell));
+    grid-auto-rows: var(--cell);
+    gap: 3px;
+    cursor: crosshair;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .cell {
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: #12141a;
+    font-weight: 700;
+    font-size: calc(var(--cell) * 0.42);
+    pointer-events: none;
+  }
+  .cell.centre { box-shadow: inset 0 0 0 2px #5b6380; }
+  .cell.t1, .cell.t2, .cell.t3, .cell.t4, .cell.start { box-shadow: none; background-color: var(--fill); }
+  .cell.t1 { --fill: var(--grey); }
+  .cell.t2 { --fill: var(--green); }
+  .cell.t3 { --fill: var(--blue); }
+  .cell.t4 { --fill: var(--orange); }
+  .cell.start { --fill: #fff; }
+  .cell.on { box-shadow: 0 0 0 2px #fff; }          /* on the route: buy this node */
+  .cell.off { opacity: 0.26; }                       /* an optional node the route skips */
+  .cell.cut { outline: 2px dashed var(--warn); outline-offset: 1px; }   /* cannot be reached */
+
+  /* A grey the player wants: a violet inner ring. An ignored node: struck through, with the
+     strike cleared around the number so the cost stays readable. */
+  .cell.want, .swatch.want { box-shadow: inset 0 0 0 3px var(--want); }
+  .cell.want.on { box-shadow: 0 0 0 2px #fff, inset 0 0 0 3px var(--want); }
+  .cell.ignored, .swatch.ignored {
+    --strike: linear-gradient(to top right,
+      transparent calc(50% - 1.5px), #12141a calc(50% - 1.5px),
+      #12141a calc(50% + 1.5px), transparent calc(50% + 1.5px));
+    background-image: var(--strike);
+  }
+  .cell.ignored { background-image: radial-gradient(circle, var(--fill) 0 31%, transparent 34%), var(--strike); }
+  .cell.ignored.off { opacity: 0.42; }
+
+  .panel { flex: 1 1 300px; max-width: 400px; display: grid; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .board { padding: 12px; }
+  h2 {
+    margin: 0 0 8px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  h2.second { margin-top: 14px; }
+  p { margin: 0; }
+  .note { margin-top: 8px; color: var(--muted); font-size: 13px; }
+
+  .palette { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  button {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #57607a; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  .brush { display: flex; align-items: center; gap: 8px; text-align: left; }
+  .brush[aria-pressed="true"] { border-color: #fff; background: #30364a; }
+  .swatch { flex: none; width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); }
+  .brush kbd { margin-left: auto; color: var(--muted); font: 12px ui-monospace, Consolas, monospace; }
+
+  .status { font-size: 18px; font-weight: 650; }
+  .line { margin-top: 4px; color: var(--muted); }
+  .warning { margin-top: 8px; color: var(--warn); }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .row + .row { margin-top: 6px; }
+  select {
+    flex: 1 1 100%;
+    padding: 7px 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+  }
+  .text-row { display: flex; align-items: flex-start; gap: 14px; }
+  .text-side { flex: 1; min-width: 0; }
+  textarea {
+    flex: none;
+    width: 27ch;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #101218;
+    color: var(--text);
+    font: 13px/1.25 ui-monospace, Consolas, monospace;
+    letter-spacing: 0.18em;
+    resize: vertical;
+    white-space: pre;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Daevanion Board Solver</h1>
+  <p class="lead">Paint the board as it looks in game. The cheapest route to every node you are after appears as you go.</p>
+</header>
+
+<main>
+  <div class="left">
+    <div class="card board">
+      <div id="grid" class="grid" aria-label="Board, 15 by 15"></div>
+    </div>
+
+    <section class="card">
+      <h2>Layout text</h2>
+      <div class="text-row">
+        <textarea id="text" rows="15" cols="15" spellcheck="false" autocomplete="off" aria-label="Layout as text"></textarea>
+        <div class="text-side">
+          <div class="row">
+            <button type="button" id="copy">Copy</button>
+            <button type="button" id="loadText">Load from text</button>
+          </div>
+          <p id="textError" class="warning" hidden></p>
+          <p class="note">One line per row. A dot is empty, S is the start, 1 to 4 is a node of that cost. A wanted grey is w. An ignored green, blue or orange is g, b or o.</p>
+          <p class="note">Boards are kept in this browser, so copy this text to back one up or share it. A smaller layout, such as an 11 by 11 board, is centred on its start.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="panel">
+    <section class="card">
+      <h2>Paint</h2>
+      <div class="palette">
+        <button type="button" class="brush" data-brush="1"><span class="swatch" style="background: var(--grey)"></span>Grey <kbd>1</kbd></button>
+        <button type="button" class="brush" data-brush="2"><span class="swatch" style="background: var(--green)"></span>Green <kbd>2</kbd></button>
+        <button type="button" class="brush" data-brush="3"><span class="swatch" style="background: var(--blue)"></span>Blue <kbd>3</kbd></button>
+        <button type="button" class="brush" data-brush="4"><span class="swatch" style="background: var(--orange)"></span>Orange <kbd>4</kbd></button>
+        <button type="button" class="brush" data-brush="5"><span class="swatch" style="background: #fff"></span>Start <kbd>S</kbd></button>
+        <button type="button" class="brush" data-brush="0"><span class="swatch"></span>Eraser <kbd>E</kbd></button>
+      </div>
+      <p class="note">Drag to paint, right-drag to erase, Ctrl+Z to undo. Each brush shows its key. For nodes the key is also the point cost.</p>
+
+      <h2 class="second">Mark</h2>
+      <div class="palette">
+        <button type="button" class="brush" data-brush="want"><span class="swatch want" style="background-color: var(--grey)"></span>Wanted <kbd>W</kbd></button>
+        <button type="button" class="brush" data-brush="ignore"><span class="swatch ignored" style="background-color: var(--blue)"></span>Ignored <kbd>I</kbd></button>
+      </div>
+      <p class="note">Wanted: a grey the route must include. Ignored: a coloured node you do not need, bought only when that is cheaper than going round it. Click a marked node again to take the mark off.</p>
+    </section>
+
+    <section class="card">
+      <h2>Route</h2>
+      <p id="status" class="status" aria-live="polite"></p>
+      <p id="greys" class="line"></p>
+      <p id="marks" class="line" hidden></p>
+      <p id="warning" class="warning" hidden></p>
+      <p class="note">Ringed nodes are the ones to buy. Faded nodes are skipped.</p>
+    </section>
+
+    <section class="card">
+      <h2>Board totals</h2>
+      <p id="totals"></p>
+      <p id="tiers" class="line"></p>
+      <p class="note">Check these against the game to catch a slip while painting.</p>
+    </section>
+
+    <section class="card">
+      <h2>Boards</h2>
+      <div class="row">
+        <select id="saved" aria-label="Saved boards"></select>
+      </div>
+      <div class="row">
+        <button type="button" id="saveAs">Save as</button>
+        <button type="button" id="remove">Delete</button>
+        <button type="button" id="undo" title="Ctrl+Z">Undo</button>
+        <button type="button" id="clear">Clear board</button>
+      </div>
+      <p id="storageNote" class="warning" hidden></p>
+    </section>
+  </div>
+</main>
+
+<script src="solver.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
