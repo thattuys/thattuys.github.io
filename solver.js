@@ -435,11 +435,49 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- comparing layouts
+
+  // How far two boards of the same size agree. `same` counts cells where both hold a node of the
+  // same colour, `differ` counts cells where the colours differ or only one board has a node, and
+  // `nodes` is the larger of the two node counts. Marks and the start tile are left out, so
+  // wanting a grey or ignoring a node is not a change of layout.
+  function compareLayouts(a, b) {
+    if (a.w !== b.w || a.h !== b.h) throw new Error('Only boards of the same size can be compared.');
+    let same = 0, differ = 0, nodesA = 0, nodesB = 0;
+    for (let i = 0; i < a.cells.length; i++) {
+      const x = isNode(a.cells[i]), y = isNode(b.cells[i]);
+      if (x) nodesA++;
+      if (y) nodesB++;
+      if (x && y && tierOf(a.cells[i]) === tierOf(b.cells[i])) same++;
+      else if (x || y) differ++;
+    }
+    return { same, differ, nodes: Math.max(nodesA, nodesB) };
+  }
+
+  // Which of `candidates` the board is a copy of, perhaps with a few changes: the index of the
+  // candidate of the same size that agrees with it on the largest share of nodes, as long as that
+  // share is at least `least`, and otherwise -1. Ties go to the earlier candidate. The game's
+  // boards agree with each other on at most 59% of their nodes, so the default of 80% allows for
+  // a handful of painting slips without mistaking one board for another.
+  function matchLayout(board, candidates, least) {
+    least = least || 0.8;
+    let best = -1, bestShare = 0;
+    for (let k = 0; k < candidates.length; k++) {
+      const other = candidates[k];
+      if (other.w !== board.w || other.h !== board.h) continue;
+      const c = compareLayouts(board, other);
+      const share = c.nodes ? c.same / c.nodes : 0;
+      if (share >= least && share > bestShare) { best = k; bestShare = share; }
+    }
+    return best;
+  }
+
   const api = {
     EMPTY, GREY, GREEN, BLUE, ORANGE, START, FLIP, MAX_WIDTH,
     tierOf, isNode, isFlipped, isTarget,
     createBoard, parseBoard, formatBoard, fitToGrid,
     analyse, greedy, solveSteps, solve, verify, routeBreakdown,
+    compareLayouts, matchLayout,
   };
 
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -333,6 +333,41 @@ test('routeBreakdown reports greys bought and skipped, and ignored nodes passed 
     { greysBought: 3, greysSkipped: 0, ignoredBought: 0, ignoredPoints: 0 });
 });
 
+// ---------------------------------------------------------------- comparing layouts
+
+test('compareLayouts ignores marks and the start, and counts each changed cell once', () => {
+  const a = board('S12/3.4');
+  assert.deepEqual(S.compareLayouts(a, a), { same: 4, differ: 0, nodes: 4 });
+  // Wanting a grey and ignoring coloured nodes leaves the layout as it was.
+  assert.deepEqual(S.compareLayouts(a, board('Swg/3.o')), { same: 4, differ: 0, nodes: 4 });
+  // So does moving the start to an empty cell.
+  assert.deepEqual(S.compareLayouts(a, board('.12/3S4')), { same: 4, differ: 0, nodes: 4 });
+  // A grey turned green, a blue erased and a grey added: three changed cells.
+  assert.deepEqual(S.compareLayouts(a, board('S22/.14')), { same: 2, differ: 3, nodes: 4 });
+  assert.deepEqual(S.compareLayouts(board('S22/.14'), a), { same: 2, differ: 3, nodes: 4 });
+  assert.throws(() => S.compareLayouts(a, board('S1')), /same size/);
+});
+
+test('matchLayout picks the candidate a board copies, allowing a few changes', () => {
+  const grey = board('11111/11S11/11111');            // 14 greys
+  const green = board('22222/22S22/22222');           // the same cells, all green
+  const narrow = board('1111/1S11/1111');
+  assert.equal(S.matchLayout(grey, [green, grey]), 1);
+  // Two of 14 cells changed still matches (12 of 14 is 86%), three does not (11 of 14 is 79%).
+  const two = board('11211/11S11/11.11'), three = board('12211/11S11/11.11');
+  assert.equal(S.matchLayout(two, [green, grey]), 1);
+  assert.equal(S.matchLayout(three, [green, grey]), -1);
+  assert.equal(S.matchLayout(three, [green, grey], 0.75), 1);
+  // The closest candidate wins, the earlier one on a tie, and other sizes are skipped.
+  assert.equal(S.matchLayout(two, [grey, two]), 1);
+  assert.equal(S.matchLayout(grey, [grey, grey]), 0);
+  assert.equal(S.matchLayout(grey, [narrow, grey]), 1);
+  assert.equal(S.matchLayout(narrow, [grey]), -1);
+  // A board with no nodes matches nothing, not even another empty board.
+  const empty = S.createBoard(5, 3);
+  assert.equal(S.matchLayout(empty, [grey, S.createBoard(5, 3)]), -1);
+});
+
 // ---------------------------------------------------------------- exhaustive cross-checks
 
 function crossCheck(label, seed, count, maxGreys, make, minCompared) {

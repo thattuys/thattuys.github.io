@@ -105,9 +105,36 @@
   }
   button:hover:not(:disabled) { border-color: #57607a; }
   button:disabled { opacity: 0.45; cursor: default; }
-  button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-  .brush { display: flex; align-items: center; gap: 8px; text-align: left; }
-  .brush[aria-pressed="true"] { border-color: #fff; background: #30364a; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  a { color: var(--blue); }
+  .brush, .pick { display: flex; align-items: center; gap: 8px; text-align: left; }
+  .brush[aria-pressed="true"], .pick[aria-current="true"] { border-color: #fff; background: #30364a; }
+
+  /* Game boards: one button each, sharing out the row and wrapping on narrow screens. */
+  .picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .pick { flex: 1 1 auto; white-space: nowrap; }
+  .pick small { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+  /* The node tooltip. It sits beside the hovered cell and never takes the pointer. */
+  .tip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 10;
+    max-width: 260px;
+    padding: 8px 10px;
+    border: 1px solid #3a4152;
+    border-radius: 8px;
+    background: var(--raised);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    font-size: 13px;
+    line-height: 1.35;
+    pointer-events: none;
+  }
+  .tip-title { font-weight: 650; }
+  .tip-meta { color: var(--muted); }
+  .tip-note { margin-top: 3px; }
+  .tip-note.warn { color: var(--warn); }
   .swatch { flex: none; width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); }
   .brush kbd { margin-left: auto; color: var(--muted); font: 12px ui-monospace, Consolas, monospace; }
 
@@ -146,7 +173,7 @@
 <body>
 <header>
   <h1>Daevanion Board Solver</h1>
-  <p class="lead">Paint the board as it looks in game. The cheapest route to every node you are after appears as you go.</p>
+  <p class="lead">Pick one of the game's boards, or paint your own as it looks in game. Hover over a node to see what it gives. The cheapest route to every node you are after appears as you go.</p>
 </header>
 
 <main>
@@ -173,6 +200,17 @@
   </div>
 
   <div class="panel">
+    <section class="card" id="game">
+      <h2>Game board</h2>
+      <div class="row">
+        <select id="playerClass" aria-label="Your class"></select>
+      </div>
+      <div id="gameBoards" class="picks" role="group" aria-label="Game boards"></div>
+      <p id="gameStatus" class="line"></p>
+      <p class="note">Hover over a node to see what it gives. Skill names follow your class. Loading a board replaces the one on screen, and Ctrl+Z brings it back.</p>
+      <p class="note">Board data from <a id="credit" href="https://metabot.gg/en/aion-2/daevanion/" target="_blank" rel="noopener">Metabot</a>, read from game build <span id="build"></span>.</p>
+    </section>
+
     <section class="card">
       <h2>Paint</h2>
       <div class="palette">
@@ -225,7 +263,10 @@
   </div>
 </main>
 
+<div id="tip" class="tip" hidden></div>
+
 <script src="solver.js"></script>
+<script src="boards.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

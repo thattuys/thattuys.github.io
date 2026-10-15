@@ -1,5 +1,5 @@
-// Page logic for the Daevanion board solver: painting, route display and saving.
-// All the board maths lives in solver.js.
+// Page logic for the Daevanion board solver: painting, route display, saving, the game's boards
+// and node tooltips. All the board maths lives in solver.js, and the game's boards in boards.js.
 (function () {
   'use strict';
 
@@ -8,6 +8,9 @@
   const CENTRE = (SIZE >> 1) * SIZE + (SIZE >> 1);
   const KEY_CURRENT = 'boardsolver.v1.current';
   const KEY_SAVED = 'boardsolver.v1.saved';
+  const KEY_CLASS = 'boardsolver.v1.class';
+  const TIP_DELAY_MS = 300;            // how long the pointer rests on a cell before its tooltip shows
+  const TIER_NAMES = ['', 'Grey', 'Green', 'Blue', 'Orange'];
   const SLICE_MS = 25;                 // how long the solver may hold the page at a time
   const PROVISIONAL_AFTER_MS = 200;    // show the quick route if the exact one takes longer than this
   // After this, settle for the quick route. The page stays responsive throughout, so the limit is
@@ -22,6 +25,8 @@
   const textEl = $('text'), textErrorEl = $('textError');
   const undoBtn = $('undo'), removeBtn = $('remove'), copyBtn = $('copy');
   const brushBtns = Array.from(document.querySelectorAll('.brush'));
+  const gameEl = $('game'), classEl = $('playerClass'), gameBoardsEl = $('gameBoards'), gameStatusEl = $('gameStatus');
+  const creditEl = $('credit'), buildEl = $('build'), tipEl = $('tip');
 
   // ---------------------------------------------------------------- storage
 
@@ -54,9 +59,37 @@
     try { return boardFromText(text); } catch (e) { return null; }
   }
 
+  // ---------------------------------------------------------------- the game's boards
+
+  // From boards.js. If it is missing or will not read, the page works as it did before it: no
+  // game board card, and tooltips that give only a node's colour and cost.
+  const game = window.DaevanionBoards || null;
+  const gameBoards = readGameBoards();     // one parsed board each, for matching and labels only
+
+  function readGameBoards() {
+    try {
+      if (!Array.isArray(game.classes) || !game.classes.length) return [];
+      return game.boards.map((b) => boardFromText(b.layout.join('\n')));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // A fresh copy to paint on. Painting changes a board in place, so the parsed copies above are
+  // never handed out.
+  const gameBoardCopy = (k) => boardFromText(game.boards[k].layout.join('\n'));
+
+  // The class chosen last time, as an index into game.classes, or -1.
+  function readClass() {
+    if (!gameBoards.length) return -1;
+    const id = store.get(KEY_CLASS);
+    return game.classes.findIndex((c) => c.id === id);
+  }
+
   // ---------------------------------------------------------------- state
 
-  let board = restoreBoard() || S.createBoard(SIZE, SIZE);
+  // A first visit opens on the first of the game's boards.
+  let board = restoreBoard() || (gameBoards.length ? gameBoardCopy(0) : S.createBoard(SIZE, SIZE));
   let facts = S.analyse(board);        // totals and unreachable cells for the current board
   let route = null;                    // the result on show, or null while there is none
   let provisional = false;             // true while `route` is the quick route and the search is still running
@@ -65,6 +98,11 @@
   let stroke = null;                   // the drag in progress
   let solveToken = 0;                  // bumping it cancels a running solve
   let currentName = '';
+  let gameIndex = -1;                  // the game board on screen, perhaps with a few changes, or -1
+  let classIndex = readClass();        // index into game.classes, or -1 until a class is chosen
+  let hoverCell = -1;                  // the cell under a resting mouse or pen, or -1
+  let tipOpen = false;                 // once the tooltip is up it follows the pointer without a delay
+  let tipTimer = 0;
   const undoStack = [];
   const cellEls = [];
   const isCut = new Uint8Array(SIZE * SIZE);
@@ -155,6 +193,59 @@
     renderPanel();
   }
 
+  function buildGameCard() {
+    if (!gameBoards.length) { gameEl.hidden = true; return; }
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Choose your class…';
+    classEl.appendChild(none);
+    for (const c of game.classes) {
+      const option = document.createElement('option');
+      option.value = c.id;
+      option.textContent = c.name;
+      classEl.appendChild(option);
+    }
+    classEl.value = classIndex >= 0 ? game.classes[classIndex].id : '';
+    game.boards.forEach((b, k) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pick';
+      btn.textContent = b.name;
+      const level = document.createElement('small');
+      level.textContent = 'Lv ' + b.level;
+      btn.appendChild(level);
+      btn.addEventListener('click', () => loadGameBoard(k));
+      gameBoardsEl.appendChild(btn);
+    });
+    buildEl.textContent = game.build;
+    renderCredit();
+  }
+
+  // The credit links to the planner page for the chosen class, or the first class.
+  function renderCredit() {
+    creditEl.href = game.url + game.classes[Math.max(classIndex, 0)].id;
+  }
+
+  function renderGameCard() {
+    if (!gameBoards.length) return;
+    const buttons = gameBoardsEl.children;
+    for (let k = 0; k < buttons.length; k++) {
+      if (k === gameIndex) buttons[k].setAttribute('aria-current', 'true');
+      else buttons[k].removeAttribute('aria-current');
+    }
+    let text;
+    if (gameIndex < 0) {
+      text = "Not one of the game's boards, so tooltips show only colour and cost.";
+    } else {
+      const name = game.boards[gameIndex].name;
+      const changed = S.compareLayouts(board, gameBoards[gameIndex]).differ;
+      text = changed === 0 ? "This is the game's " + name + ' board.'
+        : name + ' with ' + changed + (changed === 1 ? ' cell' : ' cells') + ' changed. Click ' + name +
+          " to load the game's layout.";
+    }
+    gameStatusEl.textContent = text;
+  }
+
   // ---------------------------------------------------------------- solving
 
   function show(result, isProvisional) {
@@ -212,12 +303,16 @@
     facts = S.analyse(board);
     isCut.fill(0);
     for (const i of facts.unreachable) isCut[i] = 1;
+    // Worked out from the layout alone, so undo, saved boards and pasted text need nothing extra.
+    gameIndex = gameBoards.length ? S.matchLayout(board, gameBoards) : -1;
     const text = S.formatBoard(board);
     store.set(KEY_CURRENT, text);
     if (document.activeElement !== textEl) textEl.value = text;
     route = null;
     provisional = false;
     render();
+    renderGameCard();
+    if (tipOpen) showTip();            // the node under a still pointer may have changed
     startSolve();
   }
 
@@ -460,6 +555,117 @@
     else byHand();
   }
 
+  // ---------------------------------------------------------------- game boards and class
+
+  function loadGameBoard(k) {
+    if (stroke) return;
+    const next = gameBoardCopy(k);
+    if (S.formatBoard(next) === S.formatBoard(board)) return;   // already on show: no empty undo step
+    currentName = '';
+    savedEl.value = '';
+    replaceBoard(next);
+  }
+
+  // The class is a preference, not part of the board: it stays out of undo, the layout text and
+  // saved boards. Switching it changes only the skill names, and any marks stay where they are.
+  function setClass() {
+    classIndex = game.classes.findIndex((c) => c.id === classEl.value);
+    store.set(KEY_CLASS, classEl.value);
+    renderCredit();
+    if (tipOpen) showTip();
+  }
+
+  // ---------------------------------------------------------------- tooltips
+
+  // What the cell gives, as { title: [lines], meta, notes: [{ text, warn }] }, or null for an
+  // empty cell. Labels come from the game board on screen, and only where the cell still holds a
+  // node of the colour the game has there.
+  function describeCell(i) {
+    const code = board.cells[i];
+    if (code === S.START) return { title: ['Start'], meta: 'Free', notes: [] };
+    if (!S.isNode(code)) return null;
+    const tier = S.tierOf(code);
+    const colour = TIER_NAMES[tier];
+    const out = { title: [colour + ' node'], meta: points(tier), notes: [] };
+    if (gameIndex >= 0) {
+      const source = game.boards[gameIndex];
+      const theirs = gameBoards[gameIndex].cells[i];
+      if (S.isNode(theirs) && S.tierOf(theirs) === tier) {
+        const skill = source.skills[i];
+        if (skill) {
+          out.meta = colour + ' · ' + points(tier) + ' · Skill level';
+          if (classIndex >= 0) out.title = [skill[classIndex]];
+          else {
+            out.title = ['Skill node'];
+            out.notes.push({ text: 'Choose your class to see which skill.' });
+          }
+        } else if (source.stats[i]) {
+          out.title = source.stats[i].split(', ');      // a node with two stats gets a line for each
+          out.meta = colour + ' · ' + points(tier);
+        }
+      } else {
+        out.notes.push({ text: S.isNode(theirs)
+          ? source.name + ' has a ' + TIER_NAMES[S.tierOf(theirs)].toLowerCase() + ' node here.'
+          : source.name + ' has no node here.' });
+      }
+    }
+    if (S.isFlipped(code)) {
+      out.notes.push({ text: tier === S.GREY ? 'Wanted: the route must include it.'
+        : 'Ignored: bought only when going round it costs more.' });
+    }
+    if (isCut[i]) out.notes.push({ text: 'Cannot be reached from the start.', warn: true });
+    return out;
+  }
+
+  function addTipLine(className, text) {
+    const line = document.createElement('div');
+    line.className = className;
+    line.textContent = text;           // never innerHTML: the labels come from another site
+    tipEl.appendChild(line);
+  }
+
+  function showTip() {
+    const info = hoverCell >= 0 ? describeCell(hoverCell) : null;
+    if (!info) { tipEl.hidden = true; return; }
+    tipEl.textContent = '';
+    for (const line of info.title) addTipLine('tip-title', line);
+    addTipLine('tip-meta', info.meta);
+    for (const note of info.notes) addTipLine(note.warn ? 'tip-note warn' : 'tip-note', note.text);
+    tipEl.hidden = false;
+    placeTip(hoverCell);
+  }
+
+  // Beside the cell, to the right unless that runs off the screen, so it never hides the cell.
+  function placeTip(i) {
+    const MARGIN = 8;
+    const cell = cellEls[i].getBoundingClientRect();
+    const width = tipEl.offsetWidth, height = tipEl.offsetHeight;
+    const viewWidth = document.documentElement.clientWidth, viewHeight = document.documentElement.clientHeight;
+    let left = cell.right + MARGIN;
+    if (left + width > viewWidth - MARGIN) left = cell.left - MARGIN - width;
+    const top = cell.top + (cell.height - height) / 2;
+    tipEl.style.left = Math.max(MARGIN, left) + 'px';
+    tipEl.style.top = Math.max(MARGIN, Math.min(top, viewHeight - MARGIN - height)) + 'px';
+  }
+
+  // Mouse and pen only: touch has no hover, and a press is the start of painting.
+  function hoverGrid(e) {
+    if (stroke || e.buttons !== 0 || e.pointerType === 'touch') { hideTip(); return; }
+    const i = cellAt(e);
+    if (i === hoverCell) return;
+    hoverCell = i;
+    if (tipOpen) { showTip(); return; }
+    clearTimeout(tipTimer);
+    tipTimer = setTimeout(() => { tipOpen = true; showTip(); }, TIP_DELAY_MS);
+  }
+
+  function hideTip() {
+    clearTimeout(tipTimer);
+    hoverCell = -1;
+    tipOpen = false;
+    tipEl.hidden = true;
+  }
+
   // ---------------------------------------------------------------- wiring
 
   gridEl.addEventListener('pointerdown', beginStroke);
@@ -468,6 +674,16 @@
   gridEl.addEventListener('pointercancel', endStroke);
   gridEl.addEventListener('lostpointercapture', endStroke);
   gridEl.addEventListener('contextmenu', (e) => e.preventDefault());   // the right button is a tool here
+
+  // Tooltips. A captured pointer gets no pointerleave mid-stroke, so the press itself hides them.
+  gridEl.addEventListener('pointermove', hoverGrid);
+  gridEl.addEventListener('pointerdown', hideTip);
+  gridEl.addEventListener('pointerleave', hideTip);
+  gridEl.addEventListener('pointercancel', hideTip);
+  window.addEventListener('scroll', hideTip, { passive: true });
+  window.addEventListener('resize', hideTip);
+  window.addEventListener('blur', hideTip);
+  if (gameBoards.length) classEl.addEventListener('change', setClass);
 
   for (const btn of brushBtns) btn.addEventListener('click', () => setBrush(btn.dataset.brush));
   undoBtn.addEventListener('click', undo);
@@ -481,6 +697,7 @@
   copyBtn.addEventListener('click', copyText);
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideTip();
     const tag = e.target && e.target.tagName;
     const typing = tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT';
     const key = e.key.toLowerCase();
@@ -499,6 +716,7 @@
   });
 
   buildGrid();
+  buildGameCard();
   setBrush(brush);
   refreshSaved();
   commit();
